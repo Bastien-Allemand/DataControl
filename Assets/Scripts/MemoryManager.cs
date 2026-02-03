@@ -1,52 +1,76 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
-using System.Collections.Generic;
 
-public class MemoryManager : MonoBehaviour
+public struct Content
 {
-    private List<string> m_types = new List<string>();
-    private string m_folderPath;
-    private string m_indexPath;
+    string data;
+    float importance;
+    int timeStamp;
+}
+public struct Category
+{
+    public string name;
+    public List<Content> contents;
+}
+[System.Serializable]
+public class MemoryData
+{
+    public List<Category> types = new List<Category>();
+}
+
+public class MemoryManager : MonoBehaviour {
+    public MemoryData memoryData = new MemoryData();
+    private string m_filePath;
     private int m_timeStamp = 0;
 
     private void Start()
     {
-        m_folderPath = Path.Combine(Application.persistentDataPath, "Memory");
-        Directory.CreateDirectory(m_folderPath);
+        m_filePath = Path.Combine(Application.persistentDataPath, "Memory");
+        Directory.CreateDirectory(m_filePath);
 
-        m_indexPath = Path.Combine(m_folderPath, "Index.me");
+        Extract();
+    }
+    /// <summary>
+    /// Extract existing memory from file
+    /// </summary>
+    private void Extract()
+    {
+        string file = Path.Combine(m_filePath, "memory.json");
 
-        if (!File.Exists(m_indexPath))
+        if (!File.Exists(file))
         {
-            File.WriteAllLines(m_indexPath, new string[] { "0" });
+            memoryData = new MemoryData();
+            Store(); // optional: create the file immediately
+            return;
         }
 
-        ParseIndex();
+        string json = File.ReadAllText(file);
+        memoryData = JsonUtility.FromJson<MemoryData>(json);
     }
 
-    private void ParseIndex()
+    /// <summary>
+    /// Store current memory to file
+    /// </summary>
+    private void Store()
     {
-        m_types.Clear();
+        string json = JsonUtility.ToJson(memoryData, true); // pretty print
+        string file = Path.Combine(m_filePath, "memory.json");
 
-        string[] lines = File.ReadAllLines(m_indexPath);
-        m_timeStamp = int.Parse(lines[0]);
-
-        for (int i = 1; i < lines.Length; i++)
-        {
-            m_types.Add(lines[i]);
-        }
+        File.WriteAllText(file, json);
     }
 
     public void AddType(string name)
     {
-        if (m_types.Contains(name)) return;
-
-        m_types.Add(name);
-        File.AppendAllText(m_indexPath, name + "\n");
-
-        string typeFile = Path.Combine(m_folderPath, name);
-        if (!File.Exists(typeFile))
-            File.Create(typeFile).Close();
+        if (memoryData.types.Exists(t => t.name == name))
+        {
+            Debug.LogError($"Type {name} already exists.");
+            return;
+        }
+        Category newCategory = new Category { name = name, contents = new List<Content>() };
+        memoryData.types.Add(newCategory);
+        Store();
     }
 
     public void AddContent(string type, string data, int importance)
@@ -57,7 +81,7 @@ public class MemoryManager : MonoBehaviour
             return;
         }
 
-        string path = Path.Combine(m_folderPath, type);
+        string path = Path.Combine(m_filePath, type);
         File.AppendAllText(path, $"{data}/{importance}/{m_timeStamp}\n");
 
         IncrementTime();
@@ -65,7 +89,7 @@ public class MemoryManager : MonoBehaviour
 
     public void AddImportance(string type, string data, int importance)
     {
-        string path = Path.Combine(m_folderPath, type);
+        string path = Path.Combine(m_filePath, type);
         string[] lines = File.ReadAllLines(path);
 
         for (int i = 0; i < lines.Length; i++)

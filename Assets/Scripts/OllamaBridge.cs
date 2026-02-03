@@ -1,7 +1,9 @@
+using System;
 using System.Collections;
-using UnityEngine;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
+using UnityEngine;
 public class OllamaRequest
 {
     public string model;
@@ -23,6 +25,7 @@ public class OllamaBridge : MonoBehaviour
     private string m_prompt;
 
 
+
     public void Start()
     {
         GetTypelist();
@@ -34,10 +37,21 @@ public class OllamaBridge : MonoBehaviour
         return "These are all the existing types of data:\n" + string.Join("\n", types) + "\n";
 
     }
+    public string SendPrompt(string prompt)
+    {
+        //goes throught the protocole for all the prompts
+        string temp;
+        temp = FindType(prompt);
+        List<string> typesneeded = new List<string>(temp.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
 
+        List<string> data = m_memoryManager.GetDataOfTypes(typesneeded);
+
+    }
     public string FindType(string _demand)
     {
-        return SendPrompt(m_TypePrompt = GetTypelist() + "With these what would be helpful to respond to" + _demand + "Respond only with types using the format: type\n ");
+        m_TypePrompt = GetTypelist() + "With these what would be helpful to respond to" + _demand + "Respond only with types using the format: type\n ";
+        string temp = await SendPromptAsync(m_TypePrompt);
+        return temp;
     }
     public  string Answer(string _data, string _demand)
     {
@@ -51,45 +65,36 @@ public class OllamaBridge : MonoBehaviour
         m_JudgePrompt = "Given the demand: " + _demand + "\n and the answer: " + 
             _answer + "\n select importante information that you would like to store using the format: data,importance(between 0 and 10),type of information\n" +
             "Here are the existing types of information if the one given isnt in the list a new type will be created" + GetTypelist();
-        string returning;
-        SendPrompt(m_JudgePrompt, returning);
+        SendPrompt(m_JudgePrompt);
         return 
             
     }
-    public void SendPrompt(string prompt, System.Action<string> onResult)
+    public Task<string> SendPromptAsync(string prompt)
     {
-        StartCoroutine(SendPromptCoroutine(prompt, onResult));
+        var tcs = new TaskCompletionSource<string>();
+
+        // Must be started on main thread
+        StartCoroutine(SendPromptCoroutine(prompt, tcs));
+
+        return tcs.Task;
     }
-
-    private IEnumerator SendPromptCoroutine(string prompt, System.Action<string> onResult)
+    private IEnumerator SendPromptCoroutine(string prompt,System.Threading.Tasks.TaskCompletionSource<string> tcs)
     {
-        string json = JsonUtility.ToJson(new OllamaRequest
-        {
-            model = "mistral",
-            prompt = prompt,
-            stream = false
-        });
-
-        var request = new UnityEngine.Networking.UnityWebRequest(
-            "http://127.0.0.1:11434/api/generate", "POST");
-
-        request.uploadHandler = new UnityEngine.Networking.UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
-        request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
+        string json = BuildJson("mistral", prompt, false);
+        var request = CreateRequest(json);
 
         yield return request.SendWebRequest();
 
         if (request.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
         {
-            onResult?.Invoke(request.downloadHandler.text);
+            tcs.TrySetResult(request.downloadHandler.text);
         }
         else
         {
             Debug.LogError(request.error);
-            onResult?.Invoke(null);
+            tcs.TrySetException(new Exception(request.error));
         }
     }
-
     private string BuildJson(string _model, string _prompt, bool _stream)
     {
         return JsonUtility.ToJson(new OllamaRequest
@@ -98,5 +103,15 @@ public class OllamaBridge : MonoBehaviour
             prompt = _prompt,
             stream = _stream
         });
+    }
+
+    private UnityEngine.Networking.UnityWebRequest CreateRequest(string json)
+    {
+        var request = new UnityEngine.Networking.UnityWebRequest("http://127.0.0.1:11434/api/generate", "POST");
+        request.uploadHandler = new UnityEngine.Networking.UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
+        request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
+        request.SetRequestHeader("Content-Type", "application/json");
+
+        return request;
     }
 }

@@ -22,7 +22,7 @@ public class SpeechToText : MonoBehaviour
 
     public string FetchText()
     {
-        if (results.Count == 0) return "";
+        if (results.Count == 0) return null;
 
         string text = results[0];
         results.RemoveAt(0);

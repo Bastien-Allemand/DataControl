@@ -1,13 +1,14 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
 public struct Content
 {
-    string data;
-    float importance;
-    int timeStamp;
+    public string data;
+    public float importance;
+    public ulong timeStamp;
 }
 public struct Category
 {
@@ -18,101 +19,135 @@ public struct Category
 public class MemoryData
 {
     public List<Category> types = new List<Category>();
+    public ulong m_timeStamp;
 }
 
 public class MemoryManager : MonoBehaviour {
     public MemoryData memoryData = new MemoryData();
     private string m_filePath;
-    private int m_timeStamp = 0;
+    private float m_saveTime;
+    private void Start() {
 
-    private void Start()
-    {
         m_filePath = Path.Combine(Application.persistentDataPath, "Memory");
         Directory.CreateDirectory(m_filePath);
-
         Extract();
+    }
+    private void Update()
+    {
+        m_saveTime += Time.deltaTime;
+        AutoSaveRoutine();
     }
     /// <summary>
     /// Extract existing memory from file
     /// </summary>
-    private void Extract()
-    {
+    private void Extract() {
+
         string file = Path.Combine(m_filePath, "memory.json");
 
         if (!File.Exists(file))
         {
             memoryData = new MemoryData();
-            Store(); // optional: create the file immediately
             return;
         }
-
+        Debug.Log("Extracting memory data from file...");
         string json = File.ReadAllText(file);
         memoryData = JsonUtility.FromJson<MemoryData>(json);
+        Debug.Log("Memory data extracted successfully.");
     }
 
     /// <summary>
     /// Store current memory to file
     /// </summary>
-    private void Store()
-    {
-        string json = JsonUtility.ToJson(memoryData, true); // pretty print
+    private void Store() {
+
+        string json = JsonUtility.ToJson(memoryData, true);
         string file = Path.Combine(m_filePath, "memory.json");
 
         File.WriteAllText(file, json);
+        Debug.Log("Data Saved");
     }
 
-    public void AddType(string name)
-    {
-        if (memoryData.types.Exists(t => t.name == name))
+    public void AddType(string _name) {
+
+        if (memoryData.types.Exists(t => t.name == _name))
         {
-            Debug.LogError($"Type {name} already exists.");
+            Debug.LogError($"Type {_name} already exists.");
             return;
         }
-        Category newCategory = new Category { name = name, contents = new List<Content>() };
+        Category newCategory = new Category { name = _name, contents = new List<Content>() };
         memoryData.types.Add(newCategory);
+    }
+
+    public void AddContent(string _type, string _data, float _importance) {
+
+        Category category = memoryData.types.Find(t => t.name == _type);
+        if (category.name == null)
+        {
+            Debug.LogError($"Type {_type} does not exist.");
+            return;
+        }
+        Content newContent = new Content { data = _data, importance = _importance, timeStamp = memoryData.m_timeStamp };
+
+        category.contents.Add(newContent);
+
+        IncrementTime();
+    }
+
+    public void AddImportance(string type, string data, float importance) {
+
+        Category category = memoryData.types.Find(t => t.name == type);
+        if (category.name == null) {
+
+            Debug.LogError($"Type {type} does not exist.");
+            return;
+        }
+        Content content = category.contents.Find(c => c.data == data);
+        if (content.data == null) {
+
+            Debug.LogError($"Content {data} does not exist in type {type}.");
+            return;
+        }
+        content.importance += importance;
+
+        IncrementTime();
+    }
+
+    private void IncrementTime() {
+
+        memoryData.m_timeStamp = (memoryData.m_timeStamp == UInt64.MaxValue) ? 0 : memoryData.m_timeStamp + 1;
+    }
+
+    public List<string> GetTypes() {
+
+        List<string> result = new List<string>();
+        foreach (var category in memoryData.types){
+            result.Add(category.name);
+        }
+        return result;
+    }
+    public ulong GetTimeStamp() => memoryData.m_timeStamp;
+
+    //save system as much as possible to prevent data loss
+    private void AutoSaveRoutine() {
+        if (m_saveTime > 600000) {
+            Debug.Log("Auto Saving");
+            Store();
+        }
+    }
+    private void OnApplicationQuit()
+    {
         Store();
     }
-
-    public void AddContent(string type, string data, int importance)
+    private void OnApplicationFocus(bool focus)
     {
-        if (!m_types.Contains(type))
+        if (!focus)
         {
-            Debug.LogError($"Type {type} not registered.");
-            return;
+            Store();
         }
-
-        string path = Path.Combine(m_filePath, type);
-        File.AppendAllText(path, $"{data}/{importance}/{m_timeStamp}\n");
-
-        IncrementTime();
     }
-
-    public void AddImportance(string type, string data, int importance)
-    {
-        string path = Path.Combine(m_filePath, type);
-        string[] lines = File.ReadAllLines(path);
-
-        for (int i = 0; i < lines.Length; i++)
-        {
-            if (lines[i].StartsWith(data + "/"))
-            {
-                lines[i] = $"{data}/{importance}/{m_timeStamp}";
-                break;
-            }
+    private void OnApplicationPause(bool pause) {
+        if (pause) {
+            Store();
         }
-
-        File.WriteAllLines(path, lines);
-        IncrementTime();
     }
-
-    private void IncrementTime()
-    {
-        m_timeStamp++;
-        string[] index = File.ReadAllLines(m_indexPath);
-        index[0] = m_timeStamp.ToString();
-        File.WriteAllLines(m_indexPath, index);
-    }
-
-    public List<string> GetTypes() => new List<string>(m_types);
-    public int GetTimeStamp() => m_timeStamp;
 }

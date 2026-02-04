@@ -36,7 +36,7 @@ public class Control : MonoBehaviour
         {
             while (m_prompts.Count != 0)
             {
-                m_ollamaBridge.
+                //m_ollamaBridge.
             }
         }
     }

@@ -10,91 +10,118 @@ public class OllamaRequest
     public string prompt;
     public bool stream;
 }
-
+[System.Serializable]
+public class OllamaResponse
+{
+    public string model;
+    public string created_at;
+    public string response;
+    public bool done;
+}
+public enum TypeOfPrompt
+{
+    None,
+    GETTYPE,
+    GETANSWER,
+    GETSTORE,
+}
+public struct MsgType
+{
+    public string prompt;
+    public TypeOfPrompt type; 
+}
 public class OllamaBridge : MonoBehaviour
 {
-
     [SerializeField] MemoryManager m_memoryManager;
 
-    private string m_TypePrompt;
-    private string m_mainPrompt;
-    private string m_JudgePrompt;
-    //information
-    private string m_contentlist;
-    private string m_promptAnswer;
-    private string m_prompt;
-
-
+    public List<MsgType> ToSend = new List<MsgType>();
+    public List<MsgType> ToParse = new List<MsgType>();
 
     public void Start()
     {
-        GetTypelist();
-    }
-
-    public string GetTypelist()
-    {
-        List<string> types = m_memoryManager.GetTypes();
-        return "These are all the existing types of data:\n" + string.Join("\n", types) + "\n";
 
     }
-    public string SendPrompt(string prompt)
+    public void Update()
     {
-        //goes throught the protocole for all the prompts
-        string temp;
-        temp = FindType(prompt);
-        List<string> typesneeded = new List<string>(temp.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
-
-        List<string> data = m_memoryManager.GetDataOfTypes(typesneeded);
-
+        if (ToSend.Count > 0)
+        {
+            MsgType msg = ToSend[0];
+            ToSend.RemoveAt(0);
+            StartCoroutine(SendToLLM(msg));
+        }
+        if (ToParse.Count > 0)
+        {
+            switch(ToParse[0].type)
+            {
+                case TypeOfPrompt.None:
+                    SendDemandType(ToParse[0].prompt);
+                    break;
+            }
+            ToParse.RemoveAt(0);
+        }
     }
-    public string FindType(string _demand)
+    public void SendDemandType(string prompt)
     {
-        m_TypePrompt = GetTypelist() + "With these what would be helpful to respond to" + _demand + "Respond only with types using the format: type\n ";
-        string temp = await SendPromptAsync(m_TypePrompt);
-        return temp;
-    }
-    public  string Answer(string _data, string _demand)
-    {
-        m_contentlist = "These are the data you have:\n" + _data + "\n";
-        m_promptAnswer = "Using the above data, answer the following demand: " + _demand + "\n";
-        m_prompt = m_contentlist + m_promptAnswer;
-        return SendPrompt(m_prompt);
-    }
-    public string Judge(string _answer, string _demand)
-    {
-        m_JudgePrompt = "Given the demand: " + _demand + "\n and the answer: " + 
-            _answer + "\n select importante information that you would like to store using the format: data,importance(between 0 and 10),type of information\n" +
-            "Here are the existing types of information if the one given isnt in the list a new type will be created" + GetTypelist();
-        SendPrompt(m_JudgePrompt);
-        return 
-            
-    }
-    public Task<string> SendPromptAsync(string prompt)
-    {
-        var tcs = new TaskCompletionSource<string>();
+        var types = m_memoryManager.GetTypes();
+        var shell = new StringBuilder();
 
-        // Must be started on main thread
-        StartCoroutine(SendPromptCoroutine(prompt, tcs));
+        shell.AppendLine("### Role");
+        shell.AppendLine("You are a precise data extraction and classification engine.");
+        shell.AppendLine("\n### Available Categories");
 
-        return tcs.Task;
+        foreach (var type in types)
+        {
+            shell.AppendLine($"- {type}");
+        }
+
+        shell.Append(@"
+        ### Constraints
+        * Return ONLY a valid JSON object.
+        * Do NOT include markdown code blocks.
+        * If no categories apply, return an empty 'selected_categories' array.
+        * Ensure 'confidence_score' is a numerical float.
+
+        ### Output Schema
+        {
+        ""selected_categories"": [
+            {
+                ""category_name"": ""string"",
+                ""reasoning"": ""string"",
+                ""extracted_data"": ""string""
+            }
+        ],
+        ""confidence_score"": 0.0
+        }
+
+        ### User Input
+        > ");
+        shell.Append(prompt);
+
+        MsgType msg;
+        msg.type = TypeOfPrompt.GETTYPE;
+        msg.prompt = shell.ToString();
+        ToSend.Add(msg);
     }
-    private IEnumerator SendPromptCoroutine(string prompt,System.Threading.Tasks.TaskCompletionSource<string> tcs)
+    public IEnumerator SendToLLM(MsgType _msg)
     {
-        string json = BuildJson("mistral", prompt, false);
-        var request = CreateRequest(json);
+        string json = BuildJson("mistral", _msg.prompt, false);
+        UnityEngine.Networking.UnityWebRequest request = CreateRequest(json);
 
+        // This tells Unity to pause this function until the LLM returns the data
         yield return request.SendWebRequest();
 
         if (request.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
         {
-            tcs.TrySetResult(request.downloadHandler.text);
+            string respons = ParseOllamaResponse(request.downloadHandler.text);
+            MsgType msgType;
+            msgType.type = _msg.type;
+            msgType.prompt = respons;
+            ToParse.Add(msgType);
         }
         else
-        {
-            Debug.LogError(request.error);
-            tcs.TrySetException(new Exception(request.error));
-        }
+            Debug.LogError("Error: " + request.error);   
     }
+
     private string BuildJson(string _model, string _prompt, bool _stream)
     {
         return JsonUtility.ToJson(new OllamaRequest
@@ -104,7 +131,14 @@ public class OllamaBridge : MonoBehaviour
             stream = _stream
         });
     }
+    private string ParseOllamaResponse(string json)
+    {
+        // Convert the JSON string into our C# object
+        OllamaResponse data = JsonUtility.FromJson<OllamaResponse>(json);
 
+        // Return just the text part
+        return data != null ? data.response : "Error: Could not parse response";
+    }
     private UnityEngine.Networking.UnityWebRequest CreateRequest(string json)
     {
         var request = new UnityEngine.Networking.UnityWebRequest("http://127.0.0.1:11434/api/generate", "POST");
